@@ -3,9 +3,29 @@
 #define ldirty_h
 
 #include "queue.h"
+#include "lua.h"
+#include "llimits.h"
 
-typedef struct Table Table;
-typedef struct TValue TValue;
+struct TValue;
+struct Table;
+
+typedef struct key_string_s {
+    size_t len;
+    char contents[1];
+} key_string_t;
+
+typedef union key_number_s {
+    lua_Number n;
+    lua_Integer i;
+} key_number_t;
+
+typedef struct key_value_s {
+    lu_byte tt_;
+    union {
+        key_string_t key_s;
+        key_number_t key_n;
+    } u;
+} key_value_t;
 
 struct dirty_manage_s;
 
@@ -19,17 +39,18 @@ typedef struct dirty_key_s
 
     union key
     {
-        TValue *map_key;
+        key_value_t *map_key;
         int arr_index;
-        TValue *del;
-    };
-    
+        key_value_t *del;
+    } key;
+
+    struct TValue *realkey;
     unsigned char dirty_op;
 } dirty_key_t;
 
 typedef union self_key_u
 {
-    TValue *map_key;
+    key_value_t *map_key;
     int arr_index;
 } self_key_t;
 
@@ -52,11 +73,11 @@ typedef struct dirty_root_s
 
 typedef struct dirty_manage_s
 {
-    TValue *root;
-    TValue *parent;
+    struct TValue *root;
+    struct TValue *parent;
 
-    TValue *self_key;
-    TValue *self;
+    self_key_t self_key;
+    struct TValue *self;
 
     dirty_node_t *dirty_node;
     //根才有这个节点
@@ -64,15 +85,15 @@ typedef struct dirty_manage_s
 
 } dirty_manage_t;
 
-#define get_manage(tv) ((ttistable(tv) ? hvalue(tv)->dirty_mng : NULL))
 #define is_dirty_root(mng) ((mng)->self == (mng)->root && (mng)->root != NULL)
 
-void begin_dirty_manage_table(TValue *svtable, TValue *parent, self_key_t *self_key);
-void free_dirty_table(TValue *svtable);
-void set_dirty_table(TValue *svtable, TValue *key, unsigned char op);
-void clear_dirty(TValue *svtable);
+void begin_dirty_manage_map(struct TValue *svmap, struct TValue *parent, self_key_t *self_key);
+void free_dirty_map(struct Table *svmap);
+void set_dirty_map(struct TValue *svmap, struct TValue *key, struct TValue *value, unsigned char op);
+void clear_dirty(struct TValue *svmap);
 
-void dirty_mem_pool_setup();
-void dirty_mem_pool_stat();
+void dirty_mem_pool_setup(void);
+void dirty_mem_pool_clear(void);
+void dirty_mem_pool_stat(void);
 
 #endif // ldirty_h

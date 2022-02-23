@@ -245,7 +245,7 @@ static void free_array_blk_init(fs_free_array_t *farr, fs_mbuf_blk_t *blk)
 	}
 }
 
-void fs_free_array_init(fs_free_array_t *farr, char *name, unsigned elsize, unsigned elcnt_page)
+void fs_free_array_init(fs_free_array_t *farr, const char *name, unsigned elsize, unsigned elcnt_page)
 {
 	unsigned page_size;
 

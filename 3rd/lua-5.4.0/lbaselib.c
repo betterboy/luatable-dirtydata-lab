@@ -259,7 +259,6 @@ static int luaB_next (lua_State *L) {
   }
 }
 
-
 static int luaB_pairs (lua_State *L) {
   luaL_checkany(L, 1);
   if (luaL_getmetafield(L, 1, "__pairs") == LUA_TNIL) {  /* no metamethod? */

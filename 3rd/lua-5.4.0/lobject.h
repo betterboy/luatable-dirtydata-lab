@@ -707,6 +707,9 @@ typedef union Node {
 #define setrealasize(t)		((t)->marked &= cast_byte(~BITRAS))
 #define setnorealasize(t)	((t)->marked |= BITRAS)
 
+#ifdef USE_DIRTY_DATA
+  struct dirty_manage_s;
+#endif
 
 typedef struct Table {
   CommonHeader;
@@ -718,6 +721,11 @@ typedef struct Table {
   Node *lastfree;  /* any free position is before this position */
   struct Table *metatable;
   GCObject *gclist;
+
+#ifdef USE_DIRTY_DATA
+  struct dirty_manage_s *dirty_mng;
+#endif
+
 } Table;
 
 

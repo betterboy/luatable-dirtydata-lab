@@ -132,7 +132,7 @@ typedef struct fs_free_array_s {
 } fs_free_array_t;
 
 
-void fs_free_array_init(fs_free_array_t *farr, char *name, unsigned elsize, unsigned elcnt_page);
+void fs_free_array_init(fs_free_array_t *farr, const char *name, unsigned elsize, unsigned elcnt_page);
 void fs_free_array_destruct(fs_free_array_t *farr);
 void *fs_free_array_alloc(fs_free_array_t *farr);
 void fs_free_array_free(fs_free_array_t *farr, void *element);

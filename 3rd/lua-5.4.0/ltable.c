@@ -38,6 +38,10 @@
 #include "ltable.h"
 #include "lvm.h"
 
+#ifdef USE_DIRTY_DATA
+#include "ldirty.h"
+#endif
+
 
 /*
 ** MAXABITS is the largest integer such that MAXASIZE fits in an
@@ -586,6 +590,9 @@ Table *luaH_new (lua_State *L) {
   t->flags = cast_byte(~0);
   t->array = NULL;
   t->alimit = 0;
+#ifdef USE_DIRTY_DATA
+  t->dirty_mng = NULL;
+#endif
   setnodevector(L, t, 0);
   return t;
 }
@@ -594,6 +601,11 @@ Table *luaH_new (lua_State *L) {
 void luaH_free (lua_State *L, Table *t) {
   freehash(L, t);
   luaM_freearray(L, t->array, luaH_realasize(t));
+#ifdef USE_DIRTY_DATA
+  //释放脏数据管理
+  free_dirty_map(t);
+#endif
+
   luaM_free(L, t);
 }
 

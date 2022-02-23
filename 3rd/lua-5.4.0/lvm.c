@@ -341,6 +341,7 @@ void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
           slot = luaH_newkey(L, h, key);  /* create one */
         /* no metamethod and (now) there is an entry with given key */
         setobj2t(L, cast(TValue *, slot), val);  /* set its new value */
+        //TODO: DIRTY_ADD add new key-value
         invalidateTMcache(h);
         luaC_barrierback(L, obj2gco(h), val);
         return;
@@ -366,6 +367,12 @@ void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
   }
   luaG_runerror(L, "'__newindex' chain too long; possible loop");
 }
+// #ifdef USE_DIRTY_DATA 
+//       set_dirty_map(t, cast(TValue *,slot), v, DIRTY_SET); \
+// #endif
+
+
+
 
 
 /*
