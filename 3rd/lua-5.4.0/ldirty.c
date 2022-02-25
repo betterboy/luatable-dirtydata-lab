@@ -1,7 +1,6 @@
 
 #include "ldirty.h"
 #include "lstate.h"
-#include "lobject.h"
 #include "ltable.h"
 #include "limits.h"
 
@@ -31,6 +30,10 @@ static fs_free_array_t pool_manage_root;
 }
 
 #define GET_NODELAST(h)	gnode(h, cast_sizet(sizenode(h)))
+
+#define SETOBJ(obj1,obj2) \
+	{TValue *io1=(obj1); const TValue *io2=(obj2); \
+     io1->value_ = io2->value_; settt_(io1, io2->tt_); }
 
 typedef void (*traverse_cb_t)(TValue *);
 
@@ -79,7 +82,7 @@ static void dirty_log(const char *fmt, ...)
     va_start(argptr, fmt);
     vsprintf(buf, fmt, argptr);
     va_end(argptr);
-	fprintf(stderr, "log: %s\n", buf); 
+	printf("log: %s\n", buf); 
 #endif
 }
 
@@ -93,6 +96,39 @@ static void dirty_free(void *ptr)
     if (ptr) {
         free(ptr);
     }
+}
+
+inline static size_t keysize(key_value_t *key_value)
+{
+    return key_value->len;
+}
+
+int key2str(char *buf, key_value_t *key_value)
+{
+    if (key_value == NULL) {
+        return -1;
+    }
+
+    switch (ttypetag(key_value))
+    {
+    case LUA_VNUMINT:
+        sprintf(buf, "i@%lld", key_value->u.key_n.i);
+        break;
+    
+    case LUA_VNUMFLT:
+        sprintf(buf, "f@%f", key_value->u.key_n.n);
+        break;
+
+    case LUA_VSHRSTR:
+    case LUA_VLNGSTR:
+        sprintf(buf, "s@%s", key_value->u.key_s.contents);
+        break;
+    
+    default:
+        return -1;
+    }
+
+    return 0;
 }
 
 static int samekey(key_value_t *arg1, TValue *arg2)
@@ -116,7 +152,7 @@ static int samekey(key_value_t *arg1, TValue *arg2)
     case LUA_VLNGSTR: {
         TString *str = tsvalue(arg2);
         size_t len = ttisshrstring(arg2) ? str->shrlen : str->u.lnglen;
-        return (len == arg1->u.key_s.len) && (memcmp(arg1->u.key_s.contents, getstr(str), len) == 0);
+        return (len == arg1->len) && (memcmp(arg1->u.key_s.contents, getstr(str), len) == 0);
     }
     
     default:
@@ -149,8 +185,21 @@ static void free_map_dirty_key(dirty_key_t *dk, int free)
     }
 
     dirty_log("free_map_dirty_key: free=%d", free);
-    dk->realkey = NULL;
+    // dk->realkey = NULL;
     MEM_POOL_FREE(pool_key, dk);
+}
+
+static key_value_t *new_map_root_key(const char *s)
+{
+    size_t len = strlen(s);
+    key_value_t *key_value = (key_value_t *)dirty_malloc(sizeof(key_value_t) + len);
+    memset(key_value, 0, sizeof(key_value_t) + len);
+    key_value->len = len;
+    memcpy(key_value->u.key_s.contents, s, len);
+    key_value->u.key_s.contents[len] = '\0';
+    key_value->tt_ = LUA_VSHRSTR;
+
+    return key_value;
 }
 
 static key_value_t *new_map_key_value(TValue *key)
@@ -158,20 +207,22 @@ static key_value_t *new_map_key_value(TValue *key)
     //根据key类型生成自己的key
     key_value_t *key_value = NULL;
     if (ttisstring(key)) {
-        TString *ts = gco2ts(key);
+        TString *ts = tsvalue(key);
         size_t len = ttisshrstring(key) ? ts->shrlen : ts->u.lnglen;
         key_value = (key_value_t *)dirty_malloc(sizeof(key_value_t) + len);
-        memset(key_value, 0, sizeof(key_value));
-        key_value->u.key_s.len = len;
+        memset(key_value, 0, sizeof(key_value_t) + len);
+        key_value->len = len;
         memcpy(key_value->u.key_s.contents, getstr(ts), len);
         key_value->u.key_s.contents[len] = '\0';
     } else if (ttisnumber(key)) {
         key_value = (key_value_t *)dirty_malloc(sizeof(key_value_t));
-        memset(key_value, 0, sizeof(key_value));
+        memset(key_value, 0, sizeof(key_value_t));
         if (ttisfloat(key)) {
             key_value->u.key_n.n = fltvalue(key);
+            key_value->len = sizeof(lua_Number);
         } else {
             key_value->u.key_n.i = ivalue(key);
+            key_value->len = sizeof(lua_Integer);
         }
     } else {
         dirty_log("db key type error: %d", ttype(key));
@@ -188,9 +239,9 @@ static dirty_key_t *new_map_dirty_key(TValue *key, unsigned char op)
     dirty_key_t *dk;
 
     dk = (dirty_key_t *)MEM_POOL_ALLOC(pool_key);
-    memset(dk, 0, sizeof(dk));
     dk->dirty_op = op;
-    dk->realkey = key;
+
+    SETOBJ(&dk->realkey, key);
 
     //根据key类型生成自己的key
     key_value = new_map_key_value(key);
@@ -207,7 +258,8 @@ static dirty_key_t *new_map_dirty_key(TValue *key, unsigned char op)
 static void overwrite_map_dirty_key(dirty_key_t *dk, TValue *key, unsigned char op)
 {
     key_value_t *key_value;
-    dk->realkey = key;
+
+    SETOBJ(&dk->realkey, key);
     if (dk->dirty_op == op) {
         return;
     }
@@ -248,8 +300,10 @@ static void dirty_root_remove(dirty_root_t *dirty_root, dirty_node_t *dirty_node
 
 static dirty_node_t *new_dirty_node(dirty_manage_t *mng)
 {
-    dirty_manage_t *root_mng;
+    dirty_manage_t *root_mng, *parent_mng;
     dirty_node_t *dirty_node;
+    size_t self_keylen = 0, parent_keylen = 0, used_len = 0;
+    char *buf;
 
     dirty_node = (dirty_node_t *)MEM_POOL_ALLOC(pool_node);
     dirty_node->key_cnt = 0;
@@ -261,6 +315,23 @@ static dirty_node_t *new_dirty_node(dirty_manage_t *mng)
     dirty_node->mng = mng;
     mng->dirty_node = dirty_node;
 
+    //设置自己的路径path_key
+    self_keylen = mng->self_key.map_key->len + 2;
+    if (mng->parent) {
+        parent_mng = hvalue(mng->parent)->dirty_mng;
+        parent_keylen = parent_mng->self_key.map_key->len + 2;
+    }
+
+    buf = (char *)dirty_malloc(sizeof(char) * (self_keylen + parent_keylen + 2)); //一个.和结尾0
+    if (mng->parent) {
+        key2str(buf, parent_mng->self_key.map_key);
+        buf[parent_keylen] = '.';
+        used_len += parent_keylen + 1;
+    }
+
+    key2str(buf + used_len, mng->self_key.map_key);
+    dirty_node->full_key = buf;
+
     return dirty_node;
 }
 
@@ -270,6 +341,9 @@ inline static void destroy_dirty_node(dirty_manage_t *mng)
     dirty_root_remove(dirty_root, mng->dirty_node);
 
     mng->dirty_node->mng = NULL;
+    if (mng->dirty_node->full_key != NULL) {
+        dirty_free(mng->dirty_node->full_key);
+    }
     MEM_POOL_FREE(pool_node, mng->dirty_node);
 
     mng->dirty_node = NULL;
@@ -372,7 +446,7 @@ static void clear_dirty_node(dirty_manage_t *mng)
             case DIRTY_ADD:
             case DIRTY_SET: {
                 k = dk->key.map_key;
-                realkey = dk->realkey;
+                realkey = &dk->realkey;
                 self_key.map_key = k;
                 value = luaH_get(hvalue(node), realkey);
                 #ifdef DIRTY_MAP_CHECK
@@ -426,11 +500,34 @@ static dirty_key_t *dirty_node_find_map_key(dirty_node_t *dirty_node, TValue *ke
     return NULL;
 }
 
+static int check_setobj(TValue **obj1, TValue *obj2)
+{
+    if (obj2 == NULL) return 0;
+
+    if (*obj1 == NULL) {
+        *obj1 = (TValue *)dirty_malloc(sizeof(TValue));
+    }
+
+    return 1;
+}
+
 static void dirty_manage_init(dirty_manage_t *mng, TValue *self, TValue *root, TValue *parent, self_key_t *self_key)
 {
-    mng->root = root;
-    mng->self = self;
-    mng->parent = parent;
+    if (check_setobj(&mng->self, self)) {
+        SETOBJ(mng->self, self);
+    }
+
+    if (check_setobj(&mng->root, root)) {
+        SETOBJ(mng->root, root);
+    }
+
+    if (check_setobj(&mng->parent, parent)) {
+        SETOBJ(mng->parent, parent);
+    }
+
+    // SETOBJ(mng->root, root);
+    // SETOBJ(mng->parent, parent);
+
     if (self_key) {
         mng->self_key = *self_key;
     } else {
@@ -446,9 +543,10 @@ static void free_dirty_manage(dirty_manage_t *mng)
     if (mng->dirty_node) {
         free_dirty_node(mng);
     }
-    mng->root = NULL;
-    mng->parent = NULL;
-    mng->self = NULL;
+
+    dirty_free(mng->root);
+    dirty_free(mng->parent);
+    dirty_free(mng->self);
     if (mng->self_key.map_key) {
         dirty_free(mng->self_key.map_key);
     }
@@ -467,7 +565,7 @@ static dirty_manage_t *new_dirty_manage(TValue *self, TValue *parent, self_key_t
     if (parent == NULL) {
         //root
         mng = (dirty_manage_t *)MEM_POOL_ALLOC(pool_manage_root);
-        dirty_manage_init(mng, self, self, NULL, NULL);
+        dirty_manage_init(mng, self, self, NULL, self_key);
         dirty_root_init(mng->dirty_root, self);
     } else {
         mng = (dirty_manage_t *)MEM_POOL_ALLOC(pool_manage);
@@ -517,6 +615,7 @@ static void map_accept_dirty_key(Table *map, TValue *key, unsigned char op, TVal
 {
     dirty_manage_t *mng = NULL;
     dirty_key_t *dk;
+    char buf[80];
 #ifdef USE_DIRTY_DATA
     mng = map->dirty_mng;
 #endif
@@ -528,15 +627,24 @@ static void map_accept_dirty_key(Table *map, TValue *key, unsigned char op, TVal
     //Is has the same key ?
     dk = dirty_node_find_map_key(mng->dirty_node, key);
     if (dk == NULL) {
+        if (op == DIRTY_DEL) {
+            //这种情况在lua存在，忽略此操作
+            // local t = {}; t.a = nil
+            return;
+        }
+
         dk = dirty_node_insert_map_key(mng->dirty_node, key, op);
         detach_node(op, value);
     } else {
         detach_node(op, value);
         overwrite_map_dirty_key(dk, key, op);
     }
+
+    key2str(buf, op == DIRTY_DEL ? dk->key.del : dk->key.map_key);
+    dirty_log("map_accept_dirty_key: key=%s,op=%d", buf, op);
 }
 
-void set_dirty_map(TValue *svmap, TValue *key, TValue *value, unsigned char op)
+void set_dirty_map(const TValue *svmap, TValue *key, TValue *value, unsigned char op)
 {
 #ifdef USE_DIRTY_DATA
     assert(ttistable(svmap));
@@ -566,6 +674,7 @@ void free_dirty_map(Table *map)
 #endif
 }
 
+/*
 static void traverse_mapping(TValue *map, traverse_cb_t cb) 
 {
     //traverse table and assert
@@ -609,7 +718,7 @@ static void traverse_mapping(TValue *map, traverse_cb_t cb)
         }
     }
 
-}
+} */
 
 static void assert_attach_dirty_map_recurse(TValue *svmap)
 {
@@ -674,18 +783,106 @@ static void assert_attach_dirty_map_recurse(TValue *svmap)
 
 static void clear_dirty_map_recurse(TValue *map)
 {
+    Node *n, *limit;
+    Table *t;
+    TValue *v;
+    unsigned int i, asize;
+
     clear_dirty_map(map);
 
-    //traverse table and clear dirty map
-    traverse_mapping(map, clear_dirty_map_recurse);
+    t = hvalue(map);
+    limit = GET_NODELAST(t);
+    asize = luaH_realasize(t);
+    //traverse array part
+    for (i = 0; i < asize; i++) {
+        v = &t->array[i];
+        if (isempty(v)) {
+            continue;
+        }
+
+        switch (ttype(v))
+        {
+        case LUA_TTABLE:
+            clear_dirty_map_recurse(v);
+            break;
+        
+        default:
+            break;
+        }
+    }
+
+    //traverse hash part
+    for (n = gnode(t, 0); n < limit; n++) {
+        if (isempty(gval(n))) {
+            continue;
+        }
+
+        switch (ttype(gval(n)))
+        {
+        case LUA_TTABLE:
+            clear_dirty_map_recurse(gval(n));
+            break;
+        
+        default:
+            break;
+        }
+    }
 }
 
 static void free_dirty_map_recurse(TValue *map)
 {
-    traverse_mapping(map, free_dirty_map_recurse);
+    Node *n, *limit;
+    Table *t;
+    TValue *v;
+    unsigned int i, asize;
+
+    t = hvalue(map);
+    limit = GET_NODELAST(t);
+    asize = luaH_realasize(t);
+    //traverse array part
+    for (i = 0; i < asize; i++) {
+        v = &t->array[i];
+        if (isempty(v)) {
+            continue;
+        }
+
+        switch (ttype(v))
+        {
+        case LUA_TTABLE:
+            free_dirty_map_recurse(v);
+            break;
+        
+        default:
+            break;
+        }
+    }
+
+    //traverse hash part
+    for (n = gnode(t, 0); n < limit; n++) {
+        if (isempty(gval(n))) {
+            continue;
+        }
+
+        switch (ttype(gval(n)))
+        {
+        case LUA_TTABLE:
+            free_dirty_map_recurse(gval(n));
+            break;
+        
+        default:
+            break;
+        }
+    }
 
     //root要最后清除,但这样就不能尾递归了
-    free_dirty_map(map);
+    free_dirty_map(hvalue(map));
+}
+
+void begin_dirty_root_map(struct TValue *svmap, const char *key)
+{
+    self_key_t self_key;
+    self_key.map_key = new_map_root_key(key);
+    begin_dirty_manage_map(svmap, NULL, &self_key);
 }
 
 void begin_dirty_manage_map(TValue *svmap, TValue *parent, self_key_t *key)

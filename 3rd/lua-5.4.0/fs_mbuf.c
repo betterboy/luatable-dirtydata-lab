@@ -103,12 +103,16 @@ void fs_mbuf_reset(fs_mbuf_t *mbuf, size_t reset_size)
 
 char *fs_mbuf_pullup(fs_mbuf_t *mbuf)
 {
+	fs_mbuf_blk_t *blk;
+	int size;
+	int offset = 0;
+
 	if (mbuf->blk_count <= 0) return NULL;
 	if (mbuf->blk_count == 1) goto done;
 
-	fs_mbuf_blk_t *blk = (fs_mbuf_blk_t *)calloc(1, sizeof(fs_mbuf_blk_t));
+	blk = (fs_mbuf_blk_t *)calloc(1, sizeof(fs_mbuf_blk_t));
 
-	int size = mbuf->alloc_size;
+	size = mbuf->alloc_size;
 
 	blk->id = 0;
 	blk->mbuf = mbuf;
@@ -118,7 +122,6 @@ char *fs_mbuf_pullup(fs_mbuf_t *mbuf)
 	blk_buf_init(blk);
 	blk->next = NULL;
 
-	int offset = 0;
 	fs_mbuf_blk_t *tblk, *tmp;
 	for (tblk = mbuf->head; tblk && (tmp = tblk->next, 1); tblk = tmp) {
 		int len = FS_MBUF_BLK_DATA_LEN(tblk);

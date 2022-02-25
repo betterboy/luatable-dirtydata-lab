@@ -3,14 +3,14 @@
 #define ldirty_h
 
 #include "queue.h"
-#include "lua.h"
-#include "llimits.h"
+#include "lobject.h"
+// #include "lua.h"
+// #include "llimits.h"
 
-struct TValue;
-struct Table;
+// struct TValue;
+// struct Table;
 
 typedef struct key_string_s {
-    size_t len;
     char contents[1];
 } key_string_t;
 
@@ -21,13 +21,14 @@ typedef union key_number_s {
 
 typedef struct key_value_s {
     lu_byte tt_;
+    size_t len;
     union {
         key_string_t key_s;
         key_number_t key_n;
     } u;
 } key_value_t;
 
-struct dirty_manage_s;
+// struct dirty_manage_s;
 
 #define DIRTY_SET (0)
 #define DIRTY_ADD (1)
@@ -44,7 +45,7 @@ typedef struct dirty_key_s
         key_value_t *del;
     } key;
 
-    struct TValue *realkey;
+    struct TValue realkey;
     unsigned char dirty_op;
 } dirty_key_t;
 
@@ -62,6 +63,7 @@ typedef struct dirty_node_s
 
     unsigned key_cnt;
     struct dirty_manage_s *mng;
+    char *full_key; //保存从根节点到当前节点的key path
 } dirty_node_t;
 
 //根节点管理
@@ -85,12 +87,18 @@ typedef struct dirty_manage_s
 
 } dirty_manage_t;
 
-#define is_dirty_root(mng) ((mng)->self == (mng)->root && (mng)->root != NULL)
+#define is_dirty_root(mng) ((mng)->root != NULL && (mng)->self->value_.gc == (mng)->root->value_.gc)
 
+void begin_dirty_root_map(struct TValue *svmap, const char *key);
 void begin_dirty_manage_map(struct TValue *svmap, struct TValue *parent, self_key_t *self_key);
 void free_dirty_map(struct Table *svmap);
-void set_dirty_map(struct TValue *svmap, struct TValue *key, struct TValue *value, unsigned char op);
+void set_dirty_map(const struct TValue *svmap, struct TValue *key, struct TValue *value, unsigned char op);
 void clear_dirty(struct TValue *svmap);
+
+//debug: 获取table脏数据情况
+// void dump_dirty_key_map(lua_State *L);
+
+int key2str(char *buf, key_value_t *key_value);
 
 void dirty_mem_pool_setup(void);
 void dirty_mem_pool_clear(void);

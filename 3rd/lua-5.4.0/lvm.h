@@ -12,6 +12,10 @@
 #include "lobject.h"
 #include "ltm.h"
 
+#ifdef USE_DIRTY_DATA
+#include "ldirty.h"
+#endif
+
 
 #if !defined(LUA_NOCVTN2S)
 #define cvt2str(o)	ttisnumber(o)
@@ -103,10 +107,23 @@ typedef enum {
 ** Finish a fast set operation (when fast get succeeds). In that case,
 ** 'slot' points to the place to put the value.
 */
+
+#ifdef USE_DIRTY_DATA
+
+#define luaV_finishfastset(L,t,slot,v) \
+  {setobj2t(L, cast(TValue *, slot), v); \
+    luaC_barrierback(L, gcvalue(t), v); \
+    ; \
+    set_dirty_map(t, cast(TValue *, slot), v, ttisnil(v) ? DIRTY_DEL : DIRTY_SET); \
+    }
+
+#else
+
 #define luaV_finishfastset(L,t,slot,v) \
     { setobj2t(L, cast(TValue *,slot), v); \
       luaC_barrierback(L, gcvalue(t), v); }
 
+#endif
 
 
 

@@ -330,6 +330,7 @@ void luaV_finishget (lua_State *L, const TValue *t, TValue *key, StkId val,
 void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
                      TValue *val, const TValue *slot) {
   int loop;  /* counter to avoid infinite loops */
+  char op;
   for (loop = 0; loop < MAXTAGLOOP; loop++) {
     const TValue *tm;  /* '__newindex' metamethod */
     if (slot != NULL) {  /* is 't' a table? */
@@ -341,6 +342,10 @@ void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
           slot = luaH_newkey(L, h, key);  /* create one */
         /* no metamethod and (now) there is an entry with given key */
         setobj2t(L, cast(TValue *, slot), val);  /* set its new value */
+        #ifdef USE_DIRTY_DATA
+        op = ttisnil(val) ? DIRTY_DEL : DIRTY_ADD;
+        set_dirty_map(t, key, val, op);
+        #endif
         //TODO: DIRTY_ADD add new key-value
         invalidateTMcache(h);
         luaC_barrierback(L, obj2gco(h), val);
@@ -367,13 +372,6 @@ void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
   }
   luaG_runerror(L, "'__newindex' chain too long; possible loop");
 }
-// #ifdef USE_DIRTY_DATA 
-//       set_dirty_map(t, cast(TValue *,slot), v, DIRTY_SET); \
-// #endif
-
-
-
-
 
 /*
 ** Compare two strings 'ls' x 'rs', returning an integer less-equal-
@@ -1304,11 +1302,13 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         TValue *rc = RKC(i);
         if (luaV_fastgeti(L, s2v(ra), c, slot)) {
           luaV_finishfastset(L, s2v(ra), slot, rc);
+          printf("OP_SETI: fast\n");
         }
         else {
           TValue key;
           setivalue(&key, c);
           Protect(luaV_finishset(L, s2v(ra), &key, rc, slot));
+          printf("OP_SETI: normal\n");
         }
         vmbreak;
       }

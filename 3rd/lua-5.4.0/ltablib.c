@@ -19,6 +19,14 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+#ifdef USE_DIRTY_DATA
+#include "ldirty.h"
+#include "lobject.h"
+#include "lstate.h"
+#include "ltable.h"
+#include "queue.h"
+#endif
+
 
 /*
 ** Operations that an object must define to mimic a table
@@ -406,6 +414,84 @@ static int sort (lua_State *L) {
   return 0;
 }
 
+#ifdef USE_DIRTY_DATA
+static int tbegin_dirty_table(lua_State *L)
+{
+  TValue *map;
+  const char *key;
+  checktab(L, 1, TAB_RW);
+
+  map = s2v(L->top - 2);
+  key = luaL_checklstring(L, 2, NULL);
+  begin_dirty_root_map(map, key);
+
+  return 0;
+}
+
+static int tclear_dirty_table(lua_State *L)
+{
+  TValue *map;
+
+  checktab(L, 1, TAB_RW);
+
+  map = s2v(L->top - 1);
+  clear_dirty(map);
+
+  return 0;
+}
+
+//从根节点开始
+static int tdump_dirty_root_map(lua_State *L)
+{
+  dirty_manage_t *dirty_mng;
+  dirty_key_t *dk, *next;
+  TValue *map;
+  dirty_node_t *dirty_node, *node_next;
+  char buf[80];
+  luaL_Buffer b;
+
+  checktab(L, 1, TAB_RW);
+
+  map = s2v(L->top - 1);
+  dirty_mng = hvalue(map)->dirty_mng;
+  if (dirty_mng == NULL) {
+    lua_pushnil(L);
+    lua_pushstring(L, "not dirty table");
+    return 2;
+  }
+
+  if (!is_dirty_root(dirty_mng)) {
+    lua_pushnil(L);
+    lua_pushstring(L, "not root dirty table");
+    return 2;
+  }
+
+  luaL_buffinit(L, &b);
+  if (dirty_mng->dirty_node == NULL) {
+    lua_pushboolean(L, 1);
+    return 1;
+  }
+
+
+  TAILQ_FOREACH_SAFE(dirty_node, &dirty_mng->dirty_root->dirty_node_list, entry, node_next) {
+    TAILQ_FOREACH_SAFE(dk, &dirty_node->dirty_key_list, entry, next) {
+      luaL_addstring(&b, dirty_node->full_key);
+      luaL_addchar(&b, '.');
+
+      key2str(buf, dk->key.map_key);
+      luaL_addstring(&b, buf);
+      luaL_addchar(&b, ',');
+    }
+  }
+
+  lua_pushboolean(L, 1);
+  luaL_pushresult(&b);
+
+  return 2;
+}
+
+#endif
+
 /* }====================================================== */
 
 
@@ -417,6 +503,11 @@ static const luaL_Reg tab_funcs[] = {
   {"remove", tremove},
   {"move", tmove},
   {"sort", sort},
+#ifdef USE_DIRTY_DATA
+  {"begin_dirty_manage", tbegin_dirty_table},
+  {"clear_dirty_manage", tclear_dirty_table},
+  {"dump_dirty_root_manage", tdump_dirty_root_map},
+#endif
   {NULL, NULL}
 };
 

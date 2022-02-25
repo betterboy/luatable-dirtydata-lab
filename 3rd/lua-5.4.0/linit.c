@@ -34,6 +34,10 @@
 #include "lualib.h"
 #include "lauxlib.h"
 
+#ifdef USE_DIRTY_DATA
+#include "ldirty.h"
+#endif
+
 
 /*
 ** these libs are loaded by lua.c and are readily available to any Lua
@@ -61,5 +65,7 @@ LUALIB_API void luaL_openlibs (lua_State *L) {
     luaL_requiref(L, lib->name, lib->func, 1);
     lua_pop(L, 1);  /* remove lib */
   }
+
+  dirty_mem_pool_setup();
 }
 

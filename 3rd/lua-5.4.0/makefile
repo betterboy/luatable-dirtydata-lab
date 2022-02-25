@@ -15,6 +15,7 @@ CWARNSCPP= \
 	-Wdisabled-optimization \
 	-Wdouble-promotion \
 	-Wlogical-op \
+	-Wno-declaration-after-statement \
 	-Wno-aggressive-loop-optimizations \
         # the next warnings might be useful sometimes,
 	# but usually they generate too much noise
@@ -58,7 +59,7 @@ MYLIBS= -ldl -lreadline
 
 
 CC= gcc
-CFLAGS= -Wall -O2 $(MYCFLAGS) -fno-stack-protector -fno-common -march=native
+CFLAGS= -Wall -ggdb $(MYCFLAGS) -fno-stack-protector -fno-common -march=native
 AR= ar rc
 RANLIB= ranlib
 RM= rm -f
