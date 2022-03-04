@@ -109,21 +109,17 @@ typedef enum {
 */
 
 #ifdef USE_DIRTY_DATA
-
-#define luaV_finishfastset(L,t,slot,v) \
+#define luaV_finishfastset_dirty(L,t,slot,v,k) \
   {setobj2t(L, cast(TValue *, slot), v); \
     luaC_barrierback(L, gcvalue(t), v); \
     ; \
-    set_dirty_map(t, cast(TValue *, slot), v, ttisnil(v) ? DIRTY_DEL : DIRTY_SET); \
+    set_dirty_map(t, cast(TValue *, k), v, ttisnil(v) ? DIRTY_DEL : DIRTY_SET); \
     }
-
-#else
+#endif
 
 #define luaV_finishfastset(L,t,slot,v) \
     { setobj2t(L, cast(TValue *,slot), v); \
       luaC_barrierback(L, gcvalue(t), v); }
-
-#endif
 
 
 

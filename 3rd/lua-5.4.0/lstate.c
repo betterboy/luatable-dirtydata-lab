@@ -27,6 +27,9 @@
 #include "ltable.h"
 #include "ltm.h"
 
+#ifdef USE_DIRTY_DATA
+#include "ldirty.h"
+#endif
 
 
 /*
@@ -314,6 +317,10 @@ static void close_state (lua_State *L) {
   freestack(L);
   lua_assert(gettotalbytes(g) == sizeof(LG));
   (*g->frealloc)(g->ud, fromstate(L), sizeof(LG), 0);  /* free main block */
+
+#ifdef USE_DIRTY_DATA
+  dirty_mem_pool_clear();
+#endif
 }
 
 

@@ -267,7 +267,10 @@ void fs_free_array_init(fs_free_array_t *farr, const char *name, unsigned elsize
 		page_size = MAX_PAGE_SIZE; 
 	*/
 
-	farr->name = strdup(name);
+	// farr->name = strdup(name);
+	farr->name = (char *)malloc(sizeof(char) * strlen(name));
+	memcpy(farr->name, name, strlen(name));
+
 	farr->element_size = elsize;
 	farr->element_total = 0;
 	farr->element_alloc = 0;

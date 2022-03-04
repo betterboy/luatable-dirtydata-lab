@@ -23,26 +23,24 @@ static fs_free_array_t pool_manage_root;
 #define MEM_POOL_ALLOC(which) fs_free_array_alloc(&(which))
 #define MEM_POOL_FREE(which, ptr) fs_free_array_free(&(which), (ptr))
 
-//lua macros
-#define GET_NODEKEY(v, node) { \
-    io_->value_ = n_->u.key_val; \
-    io_->tt_ = n_->u.key_tt; \
-}
-
 #define GET_NODELAST(h)	gnode(h, cast_sizet(sizenode(h)))
 
 #define SETOBJ(obj1,obj2) \
 	{TValue *io1=(obj1); const TValue *io2=(obj2); \
      io1->value_ = io2->value_; settt_(io1, io2->tt_); }
 
-typedef void (*traverse_cb_t)(TValue *);
+static void free_dirty_map_recurse(TValue *map);
+static void clear_dirty_map_recurse(TValue *map);
+static void clear_dirty_map(TValue *map);
+static void assert_attach_dirty_map_recurse(TValue *svmap);
+static void dirty_log(const char *fmt, ...);
 
 void dirty_mem_pool_setup(void)
 {
     fs_free_array_init(&pool_key, "dirty_key", sizeof(dirty_key_t), PAGE_ELEMENT_CNT);
     fs_free_array_init(&pool_node, "dirty_node", sizeof(dirty_node_t), PAGE_ELEMENT_CNT);
     fs_free_array_init(&pool_manage, "dirty_manage", sizeof(dirty_manage_t), PAGE_ELEMENT_CNT);
-    fs_free_array_init(&pool_manage_root, "dirty_manage_root", sizeof(dirty_manage_t), PAGE_ELEMENT_CNT);
+    fs_free_array_init(&pool_manage_root, "dirty_manage_root", sizeof(dirty_manage_t) + sizeof(dirty_root_t), PAGE_ELEMENT_CNT);
 }
 
 void dirty_mem_pool_clear(void)
@@ -55,24 +53,19 @@ void dirty_mem_pool_clear(void)
 
 void dirty_mem_pool_stat(void)
 {
-	fprintf(stderr, "dirty key total_size:%d,element_size:%d,total:%d,alloc:%d\n", 
+	dirty_log("dirty key total_size:%d,element_size:%d,total:%d,alloc:%d\n", 
 		pool_key.mbuf.alloc_size, pool_key.element_size, 
 		pool_key.element_total, pool_key.element_alloc);
-	fprintf(stderr, "dirty node total_size:%d,element_size:%d,total:%d,alloc:%d\n", 
+	dirty_log("dirty node total_size:%d,element_size:%d,total:%d,alloc:%d\n", 
 		pool_node.mbuf.alloc_size, pool_node.element_size, 
 		pool_node.element_total, pool_node.element_alloc);
-	fprintf(stderr, "dirty manage total_size:%d,element_size:%d,total:%d,alloc:%d\n", 
+	dirty_log("dirty manage total_size:%d,element_size:%d,total:%d,alloc:%d\n", 
 		pool_manage.mbuf.alloc_size, pool_manage.element_size,
 		pool_manage.element_total, pool_manage.element_alloc);
-	fprintf(stderr, "dirty manage_root total_size:%d,element_size:%d,total:%d,alloc:%d\n", 
+	dirty_log("dirty manage_root total_size:%d,element_size:%d,total:%d,alloc:%d\n", 
 		pool_manage_root.mbuf.alloc_size, pool_manage_root.element_size,
 		pool_manage_root.element_total, pool_manage_root.element_alloc);
 }
-
-static void free_dirty_map_recurse(TValue *map);
-static void clear_dirty_map_recurse(TValue *map);
-static void clear_dirty_map(TValue *map);
-static void assert_attach_dirty_map_recurse(TValue *svmap);
 
 static void dirty_log(const char *fmt, ...)
 {
@@ -176,6 +169,12 @@ inline static dirty_manage_t *get_manage(TValue *value)
 
 static void free_map_dirty_key(dirty_key_t *dk, int free)
 {
+#ifdef DIRTY_DEBUG
+    char buf[80];
+    key2str(buf, dk->dirty_op == DIRTY_DEL ? dk->key.del : dk->key.map_key);
+    dirty_log("free_map_dirty_key: key=%s,free=%d", buf, free);
+#endif
+
     if (dk->dirty_op == DIRTY_DEL) {
         dirty_free(dk->key.del);
     } else {
@@ -184,8 +183,6 @@ static void free_map_dirty_key(dirty_key_t *dk, int free)
         }
     }
 
-    dirty_log("free_map_dirty_key: free=%d", free);
-    // dk->realkey = NULL;
     MEM_POOL_FREE(pool_key, dk);
 }
 
@@ -257,8 +254,6 @@ static dirty_key_t *new_map_dirty_key(TValue *key, unsigned char op)
 //TODO 优化key的重写逻辑
 static void overwrite_map_dirty_key(dirty_key_t *dk, TValue *key, unsigned char op)
 {
-    key_value_t *key_value;
-
     SETOBJ(&dk->realkey, key);
     if (dk->dirty_op == op) {
         return;
@@ -271,11 +266,10 @@ static void overwrite_map_dirty_key(dirty_key_t *dk, TValue *key, unsigned char 
     }
 
     dk->dirty_op = op;
-    key_value = new_map_key_value(key);
     if (op == DIRTY_DEL) {
-        dk->key.del = key_value;
+        dk->key.del = new_map_key_value(key);
     } else {
-        dk->key.map_key = key_value;
+        dk->key.map_key = new_map_key_value(key);
     }
 }
 
@@ -394,6 +388,12 @@ static void assert_attach(dirty_manage_t *dirty_mng, dirty_key_t *dk, TValue *va
     default:
         break;
     }
+
+#ifdef DIRTY_DEBUG
+    char buf[80];
+    key2str(buf, dk->key.map_key);
+    dirty_log("assert attach succ:%s", buf);
+#endif
 }
 
 static void assert_detach(int op, TValue *value)
@@ -401,8 +401,8 @@ static void assert_detach(int op, TValue *value)
     if (op != DIRTY_ADD) {
         switch (ttype(value)) {
             case LUA_TTABLE:
-                #ifdef DEBUG
-                fprintf(stderr, "detach map.op=%d,svalue=%p", op, value);
+                #ifdef DIRTY_MAP_CHECK
+                dirty_log("deatch map.op=%d,value=%p", op, value);
                 #endif
                 break;
 
@@ -412,14 +412,14 @@ static void assert_detach(int op, TValue *value)
     }
 }
 
-static void attach_node(TValue *value, TValue *parent, self_key_t *self_key)
+static void attach_node(TValue *value, TValue *parent, self_key_t *self_key, int *free)
 {
     switch(ttype(value)) {
         case LUA_TTABLE:
             begin_dirty_manage_map(value, parent, self_key);
             break;
         default:
-            dirty_free(self_key->map_key);
+            *free = 1;
             break;
     }
 }
@@ -428,10 +428,10 @@ static void attach_node(TValue *value, TValue *parent, self_key_t *self_key)
 static void clear_dirty_node(dirty_manage_t *mng)
 {
     dirty_key_t *dk, *next;
-    key_value_t *k;
     TValue *realkey;
     TValue *value;
     self_key_t self_key;
+    int free = 0;
 
     dirty_node_t *dirty_node = mng->dirty_node;
     TValue *node = mng->self;
@@ -445,16 +445,13 @@ static void clear_dirty_node(dirty_manage_t *mng)
             {
             case DIRTY_ADD:
             case DIRTY_SET: {
-                k = dk->key.map_key;
                 realkey = &dk->realkey;
-                self_key.map_key = k;
+                self_key.map_key = dk->key.map_key;
                 value = luaH_get(hvalue(node), realkey);
                 #ifdef DIRTY_MAP_CHECK
                 assert_attach(mng, dk, value);
                 #endif
-                if (ttistable(value)) {
-                    attach_node(value, node, &self_key);
-                }
+                attach_node(value, node, &self_key, &free);
                 break;
             }
             
@@ -462,7 +459,8 @@ static void clear_dirty_node(dirty_manage_t *mng)
                 break;
             }
 
-            free_map_dirty_key(dk, 0);
+            free_map_dirty_key(dk, free);
+            free = 0;
         }
         break;
     
@@ -513,6 +511,7 @@ static int check_setobj(TValue **obj1, TValue *obj2)
 
 static void dirty_manage_init(dirty_manage_t *mng, TValue *self, TValue *root, TValue *parent, self_key_t *self_key)
 {
+    mng->parent = NULL;
     if (check_setobj(&mng->self, self)) {
         SETOBJ(mng->self, self);
     }
@@ -525,9 +524,6 @@ static void dirty_manage_init(dirty_manage_t *mng, TValue *self, TValue *root, T
         SETOBJ(mng->parent, parent);
     }
 
-    // SETOBJ(mng->root, root);
-    // SETOBJ(mng->parent, parent);
-
     if (self_key) {
         mng->self_key = *self_key;
     } else {
@@ -539,7 +535,15 @@ static void dirty_manage_init(dirty_manage_t *mng, TValue *self, TValue *root, T
 
 static void free_dirty_manage(dirty_manage_t *mng)
 {
-    int is_root = is_dirty_root(mng);
+    int is_root;
+
+#ifdef DIRTY_DEBUG
+    char buf[80];
+    key2str(buf, mng->self_key.map_key);
+    dirty_log("free dirty manager: %p->%s", mng, buf);
+#endif
+
+    is_root = is_dirty_root(mng);
     if (mng->dirty_node) {
         free_dirty_node(mng);
     }
@@ -627,12 +631,6 @@ static void map_accept_dirty_key(Table *map, TValue *key, unsigned char op, TVal
     //Is has the same key ?
     dk = dirty_node_find_map_key(mng->dirty_node, key);
     if (dk == NULL) {
-        if (op == DIRTY_DEL) {
-            //这种情况在lua存在，忽略此操作
-            // local t = {}; t.a = nil
-            return;
-        }
-
         dk = dirty_node_insert_map_key(mng->dirty_node, key, op);
         detach_node(op, value);
     } else {
@@ -640,8 +638,10 @@ static void map_accept_dirty_key(Table *map, TValue *key, unsigned char op, TVal
         overwrite_map_dirty_key(dk, key, op);
     }
 
+#ifdef DIRTY_DEBUG
     key2str(buf, op == DIRTY_DEL ? dk->key.del : dk->key.map_key);
     dirty_log("map_accept_dirty_key: key=%s,op=%d", buf, op);
+#endif
 }
 
 void set_dirty_map(const TValue *svmap, TValue *key, TValue *value, unsigned char op)
@@ -674,52 +674,6 @@ void free_dirty_map(Table *map)
 #endif
 }
 
-/*
-static void traverse_mapping(TValue *map, traverse_cb_t cb) 
-{
-    //traverse table and assert
-    Table *t = hvalue(map);
-    Node *n, *limit = GET_NODELAST(t);
-    TValue *v;
-    unsigned int i;
-    unsigned int asize = luaH_realasize(t);
-    //traverse array part
-    for (i = 0; i < asize; i++) {
-        v = &t->array[i];
-        if (isempty(v)) {
-            continue;
-        }
-
-        switch (ttype(v))
-        {
-        case LUA_TTABLE:
-            cb(v);
-            break;
-        
-        default:
-            break;
-        }
-    }
-
-    //traverse hash part
-    for (n = gnode(t, 0); n < limit; n++) {
-        if (isempty(gval(n))) {
-            continue;
-        }
-
-        switch (ttype(gval(n)))
-        {
-        case LUA_TTABLE:
-            cb(gval(n));
-            break;
-        
-        default:
-            break;
-        }
-    }
-
-} */
-
 static void assert_attach_dirty_map_recurse(TValue *svmap)
 {
     Node *n, *limit;
@@ -733,7 +687,7 @@ static void assert_attach_dirty_map_recurse(TValue *svmap)
     if (t->dirty_mng) {
         dump_dirty_info(t->dirty_mng, NULL, svmap, "assert fail map from");
     } else {
-    #ifdef DIRTY_DUMP_DEBUG
+    #ifdef DIRTY_DEBUG
         dirty_log("assert ok attach map. tvalue=%p,contents=", svmap);
     #endif
     }
@@ -890,7 +844,7 @@ void begin_dirty_manage_map(TValue *svmap, TValue *parent, self_key_t *key)
     self_key_t self_key;
     Table *map;
     Node *n, *limit;
-    TValue *v, *node_key = NULL;
+    TValue *v, node_key;
     unsigned int i, asize;
 
     if (ttype(svmap) != LUA_TTABLE) {
@@ -946,9 +900,9 @@ void begin_dirty_manage_map(TValue *svmap, TValue *parent, self_key_t *key)
         switch (ttype(gval(n)))
         {
         case LUA_TTABLE:
-            node_key->value_ = n->u.key_val;
-            node_key->tt_ = n->u.key_tt;
-            self_key.map_key = new_map_key_value(node_key);
+            node_key.value_ = n->u.key_val;
+            node_key.tt_ = n->u.key_tt;
+            self_key.map_key = new_map_key_value(&node_key);
             begin_dirty_manage_map(gval(n), svmap, &self_key);
             break;
         

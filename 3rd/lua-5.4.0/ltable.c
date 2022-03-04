@@ -40,6 +40,7 @@
 
 #ifdef USE_DIRTY_DATA
 #include "ldirty.h"
+#include <stdio.h>
 #endif
 
 

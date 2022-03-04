@@ -467,11 +467,10 @@ static int tdump_dirty_root_map(lua_State *L)
   }
 
   luaL_buffinit(L, &b);
-  if (dirty_mng->dirty_node == NULL) {
+  if (TAILQ_EMPTY(&dirty_mng->dirty_root->dirty_node_list)) {
     lua_pushboolean(L, 1);
     return 1;
   }
-
 
   TAILQ_FOREACH_SAFE(dirty_node, &dirty_mng->dirty_root->dirty_node_list, entry, node_next) {
     TAILQ_FOREACH_SAFE(dk, &dirty_node->dirty_key_list, entry, next) {

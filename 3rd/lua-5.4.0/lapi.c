@@ -790,8 +790,15 @@ static void auxsetstr (lua_State *L, const TValue *t, const char *k) {
   TString *str = luaS_new(L, k);
   api_checknelems(L, 1);
   if (luaV_fastget(L, t, str, slot, luaH_getstr)) {
+    #ifdef USE_DIRTY_DATA
+    setsvalue2s(L, L->top, str);  /* push 'str' (to make it a TValue) */
+    api_incr_top(L);
+    luaV_finishfastset_dirty(L, t, slot, s2v(L->top - 2), s2v(L->top - 1));
+    L->top -= 2;  /* pop value and key */
+    #else
     luaV_finishfastset(L, t, slot, s2v(L->top - 1));
     L->top--;  /* pop value */
+    #endif
   }
   else {
     setsvalue2s(L, L->top, str);  /* push 'str' (to make it a TValue) */
@@ -817,7 +824,11 @@ LUA_API void lua_settable (lua_State *L, int idx) {
   api_checknelems(L, 2);
   t = index2value(L, idx);
   if (luaV_fastget(L, t, s2v(L->top - 2), slot, luaH_get)) {
+    #ifdef USE_DIRTY_DATA
+    luaV_finishfastset_dirty(L, t, slot, s2v(L->top - 1), s2v(L->top - 2));
+    #else
     luaV_finishfastset(L, t, slot, s2v(L->top - 1));
+    #endif
   }
   else
     luaV_finishset(L, t, s2v(L->top - 2), s2v(L->top - 1), slot);
@@ -839,7 +850,13 @@ LUA_API void lua_seti (lua_State *L, int idx, lua_Integer n) {
   api_checknelems(L, 1);
   t = index2value(L, idx);
   if (luaV_fastgeti(L, t, n, slot)) {
+    #ifdef USE_DIRTY_DATA
+    TValue aux;
+    setivalue(&aux, n);
+    luaV_finishfastset_dirty(L, t, slot, s2v(L->top - 1), &aux);
+    #else
     luaV_finishfastset(L, t, slot, s2v(L->top - 1));
+    #endif
   }
   else {
     TValue aux;

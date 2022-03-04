@@ -365,7 +365,12 @@ void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
     }
     t = tm;  /* else repeat assignment over 'tm' */
     if (luaV_fastget(L, t, key, slot, luaH_get)) {
+      #ifdef USE_DIRTY_DATA
+      luaV_finishfastset_dirty(L, t, slot, val, key);
+      #else
       luaV_finishfastset(L, t, slot, val);
+      #endif
+    
       return;  /* done */
     }
     /* else 'return luaV_finishset(L, t, key, val, slot)' (loop) */
@@ -1290,7 +1295,11 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         if (ttisinteger(rb)  /* fast track for integers? */
             ? (cast_void(n = ivalue(rb)), luaV_fastgeti(L, s2v(ra), n, slot))
             : luaV_fastget(L, s2v(ra), rb, slot, luaH_get)) {
+          #ifdef USE_DIRTY_DATA
+          luaV_finishfastset_dirty(L, s2v(ra), slot, rc, rb);
+          #else
           luaV_finishfastset(L, s2v(ra), slot, rc);
+          #endif
         }
         else
           Protect(luaV_finishset(L, s2v(ra), rb, rc, slot));
@@ -1301,14 +1310,18 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         int c = GETARG_B(i);
         TValue *rc = RKC(i);
         if (luaV_fastgeti(L, s2v(ra), c, slot)) {
+          #ifdef USE_DIRTY_DATA
+          TValue key;
+          setivalue(&key, c);
+          luaV_finishfastset_dirty(L, s2v(ra), slot, rc, &key);
+          #else
           luaV_finishfastset(L, s2v(ra), slot, rc);
-          printf("OP_SETI: fast\n");
+          #endif
         }
         else {
           TValue key;
           setivalue(&key, c);
           Protect(luaV_finishset(L, s2v(ra), &key, rc, slot));
-          printf("OP_SETI: normal\n");
         }
         vmbreak;
       }
@@ -1318,7 +1331,11 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         TValue *rc = RKC(i);
         TString *key = tsvalue(rb);  /* key must be a string */
         if (luaV_fastget(L, s2v(ra), key, slot, luaH_getshortstr)) {
+          #ifdef USE_DIRTY_DATA
+          luaV_finishfastset_dirty(L, s2v(ra), slot, rc, rb);
+          #else
           luaV_finishfastset(L, s2v(ra), slot, rc);
+          #endif
         }
         else
           Protect(luaV_finishset(L, s2v(ra), rb, rc, slot));
