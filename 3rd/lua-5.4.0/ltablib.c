@@ -22,6 +22,8 @@
 #ifdef USE_DIRTY_DATA
 #include "ldirty.h"
 #include "lobject.h"
+#include "lapi.h"
+#include "lgc.h"
 #include "lstate.h"
 #include "ltable.h"
 #include "queue.h"
@@ -489,6 +491,78 @@ static int tdump_dirty_root_map(lua_State *L)
   return 2;
 }
 
+static void aux_pushvalue(lua_State *L, const TValue *value)
+{
+  lua_lock(L);
+  setobj2s(L, L->top, value);
+  api_incr_top(L);
+  lua_unlock(L);
+}
+
+static int tclear_dirty_map(lua_State *L)
+{
+  dirty_manage_t *dirty_mng, *dirty_node_mng;
+  dirty_key_t *dk, *next;
+  TValue *map, *dirty_value;
+  const TValue *dk_value;
+
+  dirty_node_t *dirty_node, *node_next;
+  char buf[80];
+  luaL_Buffer b;
+
+  checktab(L, 1, TAB_RW);
+  map = s2v(L->top - 1);
+  dirty_mng = hvalue(map)->dirty_mng;
+  if (dirty_mng == NULL) {
+    lua_pushnil(L);
+    lua_pushstring(L, "not dirty table");
+    return 2;
+  }
+
+  if (!is_dirty_root(dirty_mng)) {
+    lua_pushnil(L);
+    lua_pushstring(L, "not root dirty table");
+    return 2;
+  }
+
+  if (TAILQ_EMPTY(&dirty_mng->dirty_root->dirty_node_list)) {
+    lua_pushnil(L);
+    lua_pushstring(L, "dirty map is empty");
+    return 2;
+  }
+
+  lua_checkstack(L, 3);
+  luaL_buffinit(L, &b);
+  lua_newtable(L);
+
+  TAILQ_FOREACH_SAFE(dirty_node, &dirty_mng->dirty_root->dirty_node_list, entry, node_next) {
+    TAILQ_FOREACH_SAFE(dk, &dirty_node->dirty_key_list, entry, next) {
+      luaL_buffinit(L, &b);
+      luaL_addstring(&b, dirty_node->full_key);
+      luaL_addchar(&b, '.');
+
+      key2str(buf, dk->key.map_key);
+      luaL_addstring(&b, buf);
+      luaL_pushresult(&b);
+
+      dirty_node_mng = dirty_node->mng;
+      dirty_value = dirty_node_mng->self;
+      dk_value = luaH_get(hvalue(dirty_value), &dk->realkey);
+      if (isempty(dk_value)) {
+        lua_pushstring(L, "nil");
+      } else {
+        aux_pushvalue(L, dk_value);
+      }
+
+      lua_rawset(L, -3);
+    }
+  }
+
+  clear_dirty(map);
+
+  return 1;
+}
+
 #endif
 
 /* }====================================================== */
@@ -505,6 +579,7 @@ static const luaL_Reg tab_funcs[] = {
 #ifdef USE_DIRTY_DATA
   {"begin_dirty_manage", tbegin_dirty_table},
   {"clear_dirty_manage", tclear_dirty_table},
+  {"clear_dirty_map", tclear_dirty_map},
   {"dump_dirty_root_manage", tdump_dirty_root_map},
 #endif
   {NULL, NULL}

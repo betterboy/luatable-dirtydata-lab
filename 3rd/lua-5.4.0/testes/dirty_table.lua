@@ -60,15 +60,15 @@ function test_op()
 
     print("DIRTY_KEYS: ", keys)
 
-    assert(keymap["s@root.s@c"])
+    assert(keymap["root.c"])
 
-    assert(keymap["s@root.s@a"])
-    assert(not keymap["s@root.s@a.s@a1"])
-    assert(not keymap["s@root.s@a.s@a2"])
+    assert(keymap["root.a"])
+    assert(not keymap["root.a1"])
+    assert(not keymap["root.a.a2"])
 
-    assert(keymap["s@root.s@b"])
-    assert(not keymap["s@root.s@b.s@b1"])
-    assert(not keymap["s@root.s@b.s@b2"])
+    assert(keymap["root.b"])
+    assert(not keymap["root.b.b1"])
+    assert(not keymap["root.b.b2"])
 
     table.clear_dirty_manage(dirty_t)
     local Flag, keys = table.dump_dirty_root_manage(dirty_t)
@@ -88,16 +88,16 @@ function test_op()
     local keymap = get_dirty_keymap(keys)
     print("DIRTY_KEYS: ", keys)
 
-    assert(not keymap["s@root.s@a"])
-    assert(not keymap["s@root.s@b"])
-    assert(keymap["s@root.s@c"])
+    assert(not keymap["root.a"])
+    assert(not keymap["root.b"])
+    assert(keymap["root.c"])
 
-    assert(keymap["s@root.s@a.s@a1"])
-    assert(keymap["s@root.s@a.s@a2"])
+    assert(keymap["root.a.a1"])
+    assert(keymap["root.a.a2"])
 
-    assert(keymap["s@root.s@b.s@b1"])
-    assert(keymap["s@root.s@b.s@b2"])
-    assert(keymap["s@root.s@b.s@b3"])
+    assert(keymap["root.b.b1"])
+    assert(keymap["root.b.b2"])
+    assert(keymap["root.b.b3"])
 
     table.clear_dirty_manage(dirty_t)
     local Flag, keys = table.dump_dirty_root_manage(dirty_t)
@@ -201,6 +201,26 @@ function test_api()
     print("remove middle: ", Flag, keys)
 end
 
+function test_clear_dirty_map()
+    local dirty_t = {}
+    dirty_t.SubTab = {}
+    table.begin_dirty_manage(dirty_t, "root")
+    for i = 1, 5 do
+        table.insert(dirty_t, i)
+    end
+
+    dirty_t.SubTab.a = 1
+    dirty_t.SubTab[-1] = 111
+    dirty_t.SubTab[10/3] = 1.5
+    dirty_t.tab = {}
+    local Flag, keys = table.dump_dirty_root_manage(dirty_t)
+    print(Flag, keys)
+    local dirty_key = table.clear_dirty_map(dirty_t)
+    for k, v in pairs(dirty_key) do
+        print(k, v)
+    end
+end
+
 
 print("----begin dirty data test------")
 
@@ -216,4 +236,5 @@ collectgarbage("collect")
 test_array()
 
 test_api()
+test_clear_dirty_map()
 print("----dirty data test end------")

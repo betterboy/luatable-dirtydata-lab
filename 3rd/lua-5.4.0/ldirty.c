@@ -10,8 +10,14 @@
 
 #include "fs_mbuf.h"
 
-#define DIRTY_DEBUG
-#define DIRTY_MAP_CHECK
+// #define USE_HASHMAP
+// #define DIRTY_DEBUG
+// #define DIRTY_MAP_CHECK
+
+
+#ifdef USE_HASHMAP
+#include "lhash_map.h"
+#endif
 
 static fs_free_array_t pool_key;
 static fs_free_array_t pool_node;
@@ -28,6 +34,8 @@ static fs_free_array_t pool_manage_root;
 #define SETOBJ(obj1,obj2) \
 	{TValue *io1=(obj1); const TValue *io2=(obj2); \
      io1->value_ = io2->value_; settt_(io1, io2->tt_); }
+
+#define MAP_KEYLEN(key) ttisstring((key)) ? (key)->len : (key)->len + 2
 
 static void free_dirty_map_recurse(TValue *map);
 static void clear_dirty_map_recurse(TValue *map);
@@ -86,14 +94,59 @@ static void *dirty_malloc(size_t size)
 
 static void dirty_free(void *ptr)
 {
-    if (ptr) {
-        free(ptr);
+    free(ptr);
+}
+
+static const char *hash_str_keyvalue(key_value_t *key_value)
+{
+    static char buf[80];
+    memset(buf, 0, 80);
+    switch (ttypetag(key_value))
+    {
+    case LUA_VNUMINT:
+        sprintf(buf, "i@%lld", key_value->u.key_n.i);
+        return buf;
+    
+    case LUA_VNUMFLT:
+        sprintf(buf, "f@%.16g", key_value->u.key_n.n);
+        return buf;
+
+    case LUA_VSHRSTR:
+    case LUA_VLNGSTR:
+        return key_value->u.key_s.contents;
+        // sprintf(buf, "%s", key_value->u.key_s.contents);
+        // break;
+    
+    default:
+        return NULL;
     }
 }
 
-inline static size_t keysize(key_value_t *key_value)
+static const char *hash_str_tvalue(TValue *key)
 {
-    return key_value->len;
+    static char buf[80];
+    memset(buf, 0, 80);
+    switch (ttypetag(key))
+    {
+    case LUA_VNUMINT:
+        sprintf(buf, "i@%lld", ivalue(key));
+        return buf;
+    
+    case LUA_VNUMFLT:
+        sprintf(buf, "f@%.16g", fltvalue(key));
+        return buf;
+
+    case LUA_VSHRSTR:
+    case LUA_VLNGSTR: {
+        TString *ts = tsvalue(key);
+        return getstr(ts);
+    }
+    
+    default:
+        return NULL;
+    }
+
+    return NULL;
 }
 
 int key2str(char *buf, key_value_t *key_value)
@@ -109,12 +162,12 @@ int key2str(char *buf, key_value_t *key_value)
         break;
     
     case LUA_VNUMFLT:
-        sprintf(buf, "f@%f", key_value->u.key_n.n);
+        sprintf(buf, "f@%.16g", key_value->u.key_n.n);
         break;
 
     case LUA_VSHRSTR:
     case LUA_VLNGSTR:
-        sprintf(buf, "s@%s", key_value->u.key_s.contents);
+        sprintf(buf, "%s", key_value->u.key_s.contents);
         break;
     
     default:
@@ -203,6 +256,7 @@ static key_value_t *new_map_key_value(TValue *key)
 {
     //根据key类型生成自己的key
     key_value_t *key_value = NULL;
+    char buf[80];
     if (ttisstring(key)) {
         TString *ts = tsvalue(key);
         size_t len = ttisshrstring(key) ? ts->shrlen : ts->u.lnglen;
@@ -216,10 +270,12 @@ static key_value_t *new_map_key_value(TValue *key)
         memset(key_value, 0, sizeof(key_value_t));
         if (ttisfloat(key)) {
             key_value->u.key_n.n = fltvalue(key);
-            key_value->len = sizeof(lua_Number);
+            sprintf(buf, "%.16g", fltvalue(key));
+            key_value->len = strlen(buf);
         } else {
             key_value->u.key_n.i = ivalue(key);
-            key_value->len = sizeof(lua_Integer);
+            sprintf(buf, "%lld", ivalue(key));
+            key_value->len = strlen(buf);
         }
     } else {
         dirty_log("db key type error: %d", ttype(key));
@@ -301,6 +357,9 @@ static dirty_node_t *new_dirty_node(dirty_manage_t *mng)
 
     dirty_node = (dirty_node_t *)MEM_POOL_ALLOC(pool_node);
     dirty_node->key_cnt = 0;
+#ifdef USE_HASHMAP
+    dirty_node->dk_hash = hash_str_create();
+#endif
     TAILQ_INIT(&dirty_node->dirty_key_list);
 
     root_mng = get_manage(mng->root);
@@ -310,10 +369,13 @@ static dirty_node_t *new_dirty_node(dirty_manage_t *mng)
     mng->dirty_node = dirty_node;
 
     //设置自己的路径path_key
-    self_keylen = mng->self_key.map_key->len + 2;
+    self_keylen = MAP_KEYLEN(mng->self_key.map_key);
     if (mng->parent) {
+#ifdef USE_DIRTY_DATA
         parent_mng = hvalue(mng->parent)->dirty_mng;
         parent_keylen = parent_mng->self_key.map_key->len + 2;
+        parent_keylen = MAP_KEYLEN(parent_mng->self_key.map_key);
+#endif
     }
 
     buf = (char *)dirty_malloc(sizeof(char) * (self_keylen + parent_keylen + 2)); //一个.和结尾0
@@ -333,6 +395,11 @@ inline static void destroy_dirty_node(dirty_manage_t *mng)
 {
     dirty_root_t *dirty_root = get_manage(mng->root)->dirty_root;
     dirty_root_remove(dirty_root, mng->dirty_node);
+
+#ifdef USE_HASHMAP
+    hash_str_release(mng->dirty_node->dk_hash);
+    mng->dirty_node->dk_hash = NULL;
+#endif
 
     mng->dirty_node->mng = NULL;
     if (mng->dirty_node->full_key != NULL) {
@@ -374,6 +441,7 @@ static void dump_dirty_info(dirty_manage_t *mng, dirty_key_t *dk, TValue *value,
 
 static void assert_attach(dirty_manage_t *dirty_mng, dirty_key_t *dk, TValue *value)
 {
+    char buf[80];
 #ifdef DIRTY_DEBUG
     if (ttistable(value)) {
         dump_dirty_info(dirty_mng, dk, value , "try assert attach");
@@ -390,7 +458,6 @@ static void assert_attach(dirty_manage_t *dirty_mng, dirty_key_t *dk, TValue *va
     }
 
 #ifdef DIRTY_DEBUG
-    char buf[80];
     key2str(buf, dk->key.map_key);
     dirty_log("assert attach succ:%s", buf);
 #endif
@@ -473,16 +540,29 @@ static void clear_dirty_node(dirty_manage_t *mng)
 
 static dirty_key_t *dirty_node_insert_map_key(dirty_node_t *dirty_node, TValue *key, unsigned char op)
 {
-    dirty_key_t *dk = new_map_dirty_key(key, op);
+    dirty_key_t *dk;
+
+    dk = new_map_dirty_key(key, op);
     TAILQ_INSERT_TAIL(&dirty_node->dirty_key_list, dk, entry);
     dirty_node->key_cnt++;
+
+#ifdef USE_HASHMAP
+    const char *str = hash_str_keyvalue(dk->key.map_key);
+    hash_str_set(dirty_node->dk_hash, str, dk);
+#endif
 
     return dk;
 }
 
 static dirty_key_t *dirty_node_find_map_key(dirty_node_t *dirty_node, TValue *key)
 {
-    dirty_key_t *dk;
+    dirty_key_t *dk = NULL;
+
+#ifdef USE_HASHMAP
+    dk = (dirty_key_t *)hash_str_find(dirty_node->dk_hash, hash_str_tvalue(key));
+    return dk;
+#endif
+
     TAILQ_FOREACH(dk, &dirty_node->dirty_key_list, entry) {
         if (dk->dirty_op == DIRTY_DEL) {
             if (samekey(dk->key.del, key)) {

@@ -4,11 +4,7 @@
 
 #include "queue.h"
 #include "lobject.h"
-// #include "lua.h"
-// #include "llimits.h"
 
-// struct TValue;
-// struct Table;
 
 typedef struct key_string_s {
     char contents[1];
@@ -64,6 +60,7 @@ typedef struct dirty_node_s
     unsigned key_cnt;
     struct dirty_manage_s *mng;
     char *full_key; //保存从根节点到当前节点的key path
+    void *dk_hash;
 } dirty_node_t;
 
 //根节点管理
