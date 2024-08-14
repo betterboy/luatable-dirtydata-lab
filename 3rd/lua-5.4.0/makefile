@@ -10,6 +10,8 @@ CWARNSCPP= \
 	-Wshadow \
 	-Wsign-compare \
 	-Wundef \
+	-Wunused-function \
+	-Wunused-parameter \
 	-Wwrite-strings \
 	-Wredundant-decls \
 	-Wdisabled-optimization \
@@ -53,14 +55,14 @@ LOCAL = $(TESTS) $(CWARNS)
 
 
 # enable Linux goodies
-MYCFLAGS= $(LOCAL) -g -std=c99 -DLUA_USE_LINUX -DLUA_USE_READLINE
+MYCFLAGS= $(LOCAL) -O2 -std=c99 -DLUA_USE_LINUX -DLUA_USE_READLINE
 MYLDFLAGS= $(LOCAL) -Wl,-E
-MYLIBS= -ldl -lreadline -lasan
+MYLIBS= -ldl -lreadline
 
 ASANFLAGS= -fsanitize=address -fno-omit-frame-pointer
 
 CC= gcc
-CFLAGS= -Wall $(MYCFLAGS) $(ASANFLAGS) -fno-stack-protector -fno-common -march=native
+CFLAGS= -Wall $(MYCFLAGS) -fno-stack-protector -fno-common -march=native
 AR= ar rc
 RANLIB= ranlib
 RM= rm -f
@@ -75,7 +77,7 @@ LIBS = -lm
 CORE_T=	liblua.a
 CORE_O=	lapi.o lcode.o lctype.o ldebug.o ldo.o ldump.o lfunc.o lgc.o llex.o \
 	lmem.o lobject.o lopcodes.o lparser.o lstate.o lstring.o ltable.o \
-	ltm.o lundump.o lvm.o lzio.o ltests.o ldirty.o fs_mbuf.o
+	ltm.o lundump.o lvm.o lzio.o ltests.o ldirty.o fs_mbuf.o lhash_map.o
 AUX_O=	lauxlib.o
 LIB_O=	lbaselib.o ldblib.o liolib.o lmathlib.o loslib.o ltablib.o lstrlib.o \
 	lutf8lib.o loadlib.o lcorolib.o linit.o
